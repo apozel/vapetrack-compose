@@ -1,0 +1,112 @@
+version: "2.2"
+services:
+  traefik:
+    labels:
+      - "traefik.enable=true"
+    image: traefik:latest
+    command:
+      # configure logging
+      - "--log.level=DEBUG"
+      - "--accesslog=true"
+      # show dashboard :)
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      # docker provider, only if asked
+      - "--providers.docker=true"
+      - "--providers.docker.exposedByDefault=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls=true"
+      # use specified docker network
+      #- "--providers.docker.network=public"
+      # default subdomain exposition # change here
+      #- "--providers.docker.defaultRule=Host(`server.local`)"
+
+    ports:
+      # outside world
+      - 80:80
+      - "443:443"
+      - 8080:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    network_mode: host
+
+  web-mock:
+    image: "nginx:latest"
+    expose:
+      - 80
+    volumes:
+      - /home/apozel/projet/vapetrack/mock/front/dist/vapetrack:/usr/share/nginx/html
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web-mock.rule=Host(`web.mock.local`)"
+      - "traefik.http.routers.web-mock.service=web-mock" # associe la route au service qu'on crée en dessous 'traefik.http.services.web-mock.loadBalancer.server.port=80'
+      - "traefik.http.services.web-mock.loadBalancer.server.port=80"
+
+  back-ecig-mock:
+    image: "vapetrack-back-mock:latest"
+    ports:
+      - 4001:3000
+    environment:
+      - APP_ID=1.1
+      - JWT_SECRET=envraimaintenantcestsecu
+      - APP_PORT=3000
+      - LOG_LEVEL=debug
+      - INFLUXDB_NAME=ecig
+      - INFLUXDB_USER=vapetrack_link
+      - INFLUXDB_PASSWORD=secretuser
+      - INFLUXDB_HOST=192.168.1.24
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.back-mock.rule=Host(`web.mock.local`)&&PathPrefix(`/api`)"
+
+  iot_storage:
+    image: "influxdb"
+    container_name: "iot_storage"
+    environment:
+      - INFLUXDB_DB=ecig
+      - INFLUXDB_ADMIN_USER=admin
+      - INFLUXDB_ADMIN_PASSWORD=secretadmin
+      - INFLUXDB_USER=vapetrack_link
+      - INFLUXDB_USER_PASSWORD=secretuser
+    volumes:
+      - ./data/influxdb:/var/lib/influx.db
+    ports:
+      - "8086:8086"
+
+  mongo_storage:
+    image: "mongo"
+    container_name: "mongodb"
+    volumes:
+      - ./data/mongodb:/data/db
+    ports:
+      - 27017:27017
+
+  mongo_express:
+    image: "mongo-express"
+    container_name: "mongo-express"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+    depends_on:
+      - "mongo_storage"
+    expose:
+      - 8081
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mongo.rule=Host(`server.local`)&&PathPrefix(`/mongo-express`)"
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=hello"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.local`)"
+      - "traefik.http.routers.grafana.service=grafana" # associe la route au service qu'on crée en dessous 'traefik.http.services.grafana.loadBalancer.server.port=80'
+      - "traefik.http.services.grafana.loadBalancer.server.port=3000"
+      - "traefik.http.middlewares.grafana.stripprefix.prefixes=/grafana"
+      - "traefik.http.routers.grafana.middlewares=grafana@docker"
+
+    expose:
+      - 3000
